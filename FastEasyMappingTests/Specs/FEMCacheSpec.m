@@ -21,15 +21,18 @@
 SPEC_BEGIN(FEMCacheSpec)
     __block NSManagedObjectContext *context = nil;
 
-
     beforeEach(^{
         [MagicalRecord setDefaultModelFromClass:[self class]];
-        [MagicalRecord setupCoreDataStackWithInMemoryStore];
+        [MagicalRecord setupCoreDataStackWithStoreNamed:@"tests"];
 
         context = [NSManagedObjectContext MR_rootSavingContext];
     });
 
     afterEach(^{
+        for (NSPersistentStore *store in context.persistentStoreCoordinator.persistentStores) {
+            [context.persistentStoreCoordinator destroyPersistentStoreAtURL:store.URL withType:store.type options:store.options error:nil];
+        }
+
         context = nil;
         [MagicalRecord cleanUp];
     });
@@ -150,6 +153,50 @@ SPEC_BEGIN(FEMCacheSpec)
         it(@"should return existing nested object", ^{
             Person *person = [FEMDeserializer objectFromRepresentation:representation mapping:mapping context:context];
             [[[cache existingObjectForRepresentation:representation[@"car"] mapping:carMapping] should] equal:person.car];
+        });
+    });
+
+    // see https://github.com/Yalantis/FastEasyMapping/issues/80
+    describe(@"limits", ^{
+        __block FEMManagedObjectCache *cache;
+        __block NSMutableArray *representation;
+
+        FEMMapping *mapping = [MappingProvider carMappingWithPrimaryKey];
+        NSInteger limit = 10000;
+
+        beforeEach(^{
+            representation = [NSMutableArray new];
+
+            for (NSInteger i = 0; i < limit; i++) {
+                [representation addObject:@{mapping.primaryKeyAttribute.keyPath: @(i)}];
+
+                Car *car = [[Car alloc] initWithContext:context];
+                car.carID = @(i);
+            }
+
+            cache = [[FEMManagedObjectCache alloc] initWithMapping:mapping representation:representation context:context];
+        });
+
+        describe(@"when accessing via representation", ^{
+            it(@"should successfully retrieve large amount of objects", ^{
+                for (NSInteger i = 0; i < limit; i++) {
+                    Car *car = [cache existingObjectForRepresentation:representation[i] mapping:mapping];
+
+                    [[car shouldNot] beNil];
+                    [[car.carID should] equal:@(i)];
+                }
+            });
+        });
+
+        describe(@"when accessing via primary key", ^{
+            it(@"should successfully retrieve large amount of objects", ^{
+                for (NSInteger i = 0; i < limit; i++) {
+                    Car *car = [cache existingObjectForPrimaryKey:@(i) mapping:mapping];
+
+                    [[car shouldNot] beNil];
+                    [[car.carID should] equal:@(i)];
+                }
+            });
         });
     });
 
